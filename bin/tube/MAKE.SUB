@@ -1,0 +1,13 @@
+z80asm main/rmf
+z80asm execz/rmf
+z80asm eval/rmf
+z80asm asmb/rmf
+z80asm math/rmf
+z80asm acorn/rmf
+z80asm zmos/rmf
+z80asm data/rmf
+era bbcz80.com
+link bbcz80=/p:0100,main,execz,eval,asmb,math,acorn,zmos,/p:4800,data
+hexbin bbcz80
+era bbcz80.hex
+ren bbcz80.com=bbcz80.bin
