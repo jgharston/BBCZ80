@@ -1,0 +1,8 @@
+		TITLE	BBC BASIC (C) R.T.RUSSELL 1981-2025
+;
+;BBC BASIC INTERPRETER - Z80 VERSION
+;BUILD "EXEC" STATEMENT EXECUTION MODULE WITH BBC FILE I/O
+;Have to do this this way to pass a build option to exec.z80
+;
+BBCIO	EQU	1	; Build with BBC file I/O
+include exec.z80

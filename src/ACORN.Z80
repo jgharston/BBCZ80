@@ -1,9 +1,10 @@
 	TITLE	COPYRIGHT (C) R.T.RUSSELL 1983-2024
 ;
-;PATCH FOR BBC BASIC TO CP/M 2.2 & 3.0
+;PATCH FOR BBC BASIC TO Z80 TUBE BBC API
 ;* ACORN COMPUTERS Z80 TUBE VERSION  *
 ;(C) COPYRIGHT R.T.RUSSELL, 02-01-1984
 ;VERSION 5.0, 12-07-2024
+;OPTIMISATIONS 04-08-2025 JGH
 ;
 OSWRCH	EQU	0FFEEH
 OSWORD	EQU	0FFF1H
@@ -75,8 +76,9 @@ TFILL	EQU	03H
 ; 	  Destroys: A,D,E,H,L,F
 ;
 GETIME:	LD	A,1
-	LD	HL,SCRAP
-	CALL	OSWORD
+;	LD	HL,SCRAP
+;	CALL	OSWORD
+	CALL	WORDCALL
 	LD	HL,SCRAP
 	LD	E,(HL)
 	INC	HL
@@ -91,54 +93,49 @@ GETIME:	LD	A,1
 ;
 ;GETIMS	- Read real-time clock as string.
 ;  	  Outputs:  TIME$ in string accumulator
-;                   E = string length (25)
+;                   E = string length, 0 or 24
 ; 	  Destroys: A,B,C,D,E,H,L,F
 ;
 GETIMS:	LD	A,14
-	LD	HL,SCRAP
+	LD	HL,ACCS
 	LD	(HL),0
+	PUSH	HL
 	CALL	OSWORD
-	LD	HL,SCRAP
-	LD	DE,ACCS
-	LD	A,(HL)
+	POP	DE
+	LD	A,(DE)
 	CP	E
-	RET	Z
-	LD	BC,25
-	LDIR
-	RET
+	RET	Z	; Nothing returned
+	LD	E,24	; Return 24 characters
+	RET		; "Mon,12 Aug 2025.12:00:00"
 ;
 ;
 ;PUTIME	- Load elapsed-time clock.
 ;   	  Inputs:   DEHL = time to load (centiseconds)
+;   	  Outputs:  IX => data in SCRAP
 ; 	  Destroys: A,D,E,H,L,F
 ;
-PUTIME:	PUSH	IX
-	LD	IX,SCRAP
+PUTIME:
+;	PUSH	IX
+	LD	A,2
+WORDIX:	LD	IX,SCRAP
 	LD	(IX+0),L
 	LD	(IX+1),H
 	LD	(IX+2),E
 	LD	(IX+3),D
-	LD	A,2
+	LD	(IX+4),0
+;	POP	IX
+;	LD	A,2
+WORDCALL:
 	LD	HL,SCRAP
-	CALL	OSWORD
-	POP	IX
-	RET
+	JP	OSWORD
 ;
 ;PUTIMS	- Wtite real-time clock as string.
 ;  	  Inputs:   string in string accumulator
 ;                   E = string length
 ; 	  Destroys: A,B,C,D,E,H,L,F
 ;
-PUTIMS:	LD	A,E		;Length
-	CP	26
-	RET	NC
-	LD	B,0
-	LD	C,A
-	LD	DE,SCRAP+1
-	LD	HL,ACCS
-	LDIR
-	LD	HL,SCRAP
-	LD	(HL),A
+PUTIMS:	LD	HL,ACCS-1
+	LD	(HL),E		; Length
 	LD	A,15
 	JP	OSWORD
 ;
@@ -199,14 +196,19 @@ POINT:	CALL	EXPRI
 	EXX
 	POP	DE
 	CALL	BRAKET
-	LD	IX,SCRAP
-	LD	(IX+0),E
-	LD	(IX+1),D
-	LD	(IX+2),L
-	LD	(IX+3),H
-	LD	HL,SCRAP
 	LD	A,9
-	CALL	OSWORD
+	EX	DE,HL
+	CALL	WORDIX
+;	LD	IX,SCRAP
+;	LD	(IX+0),E
+;	LD	(IX+1),D
+;	LD	(IX+2),L
+;	LD	(IX+3),H
+;;	LD	HL,SCRAP
+;;	LD	A,9
+;;	CALL	OSWORD
+;	LD	A,9
+;	CALL	WORDCALL
 	LD	A,(IX+4)
 	LD	L,A
 	ADD	A,1
@@ -264,9 +266,11 @@ ENVEL1:	CALL	EXPRI
 	PUSH	IX
 	CALL	COMMA
 	JR	ENVEL1
-ENVEL2:	LD	HL,SCRAP
-	LD	A,8
-	CALL	OSWORD
+;ENVEL2:	LD	HL,SCRAP
+;	LD	A,8
+;	CALL	OSWORD
+ENVEL2:	LD	A,8
+	CALL	WORDCALL
 	JP	XEQ
 ;
 ;SOUND - SOUND var,var,var,var
@@ -292,9 +296,11 @@ SOUND1:	CALL	EXPRI
 	PUSH	IX
 	CALL	COMMA
 	JR	SOUND1
-SOUND2:	LD	HL,SCRAP
-	LD	A,7
-	CALL	OSWORD
+;SOUND2:	LD	HL,SCRAP
+;	LD	A,7
+;	CALL	OSWORD
+SOUND2:	LD	A,7
+	CALL	WORDCALL
 	JP	XEQ
 ;
 ;MODE - MODE n
@@ -621,11 +627,11 @@ MOUSE:	LD	A,128
 	LD	HL,9
 	CALL	OSBYTE
 	PUSH	HL
-	LD	A,128
+;	LD	A,128	; A preserved
 	LD	HL,8
 	CALL	OSBYTE
 	PUSH	HL
-	LD	A,128
+;	LD	A,128	; A preserved
 	LD	HL,7
 	CALL	OSBYTE
 	PUSH	HL
@@ -678,9 +684,12 @@ WAIT1:	CALL	TRAP
 ;
 ;OSCALL - Trap call to FFxx
 ;
-OSCALL:	POP	HL		;DITCH RETURN ADDRESS
+OSCALL:
+;	POP	HL		;DITCH RETURN ADDRESS
+;	LD	HL,OSRET
+;	PUSH	HL		;NEW RETURN ADDRESS
 	LD	HL,OSRET
-	PUSH	HL		;NEW RETURN ADDRESS
+	EX	(SP),HL		;NEW RETURN ADDRESS
 	LD	A,(IX+4)	;A%
 	LD	E,(IX+20)	;E%
 	LD	H,(IX+100)	;Y%

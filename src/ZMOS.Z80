@@ -1,0 +1,593 @@
+	TITLE	BBC BASIC (C) R.T.RUSSELL 1984-2024
+;
+;PATCH FOR BBC BASIC FOR Z80 TUBE MOS
+;* ACORN COMPUTERS Z80 TUBE, BBC FILE I/O VERSION *
+;(C) COPYRIGHT R.T.RUSSELL, 08-05-1984
+;VERSION 5.0, 14-07-2025
+;04-08-2025 JGH ZMOS.Z80 for Z80Tube with BBC file I/O
+;22-08-2025 JGH OSLOAD checks running out of memory
+; 48 bytes remaining
+;
+; CMOS.Z80 - CP/M MOS interface
+; AMOS.Z80 - Acorn CP/M MOS interface
+; ZMOS.Z80 - Acorn Z80 MOS interface
+;
+	GLOBAL	OSINIT
+	GLOBAL	OSRDCH
+	GLOBAL	OSWRCH
+	GLOBAL	OSLINE
+	GLOBAL	OSSAVE
+	GLOBAL	OSLOAD
+	GLOBAL	OSOPEN
+	GLOBAL	OSSHUT
+	GLOBAL	SHUTALL
+	GLOBAL	OSBGET
+	GLOBAL	OSBPUT
+	GLOBAL	OSSTAT
+	GLOBAL	GETEXT
+	GLOBAL	PUTEXT
+	GLOBAL	GETPTR
+	GLOBAL	PUTPTR
+	GLOBAL	PROMPT
+	GLOBAL	RESET
+	GLOBAL	LTRAP
+	GLOBAL	OSCLI
+	GLOBAL	TRAP
+	GLOBAL	BYE
+	GLOBAL	SCRAP
+	GLOBAL	VERS
+	GLOBAL	YEAR
+	GLOBAL	BUILD
+;
+	EXTRN	ESCAPE
+	EXTRN	EXTERR
+	EXTRN	CHECK
+	EXTRN	CRLF
+;
+	EXTRN	ACCS
+	EXTRN	FREE
+	EXTRN	CURLIN
+	EXTRN	ERROR
+	EXTRN	USER
+	EXTRN	VERMSG
+	EXTRN	NOROOM
+	EXTRN	BUFFER
+;
+;OSSAVE - Save program to a file.
+;   Inputs: HL addresses filename (term CR)
+;           DE = start address of data to save
+;           BC = length of data to save (bytes)
+; Destroys: A,B,C,D,E,H,L,F
+;
+OSSAVE:	LD	(SCRAP+0),HL	; filename
+	LD	HL,(FREE)	; Build at VARTOP
+	PUSH	DE		; Save start address
+	PUSH	BC		; Save length
+	PUSH	HL		; Save start of build area
+	LD	C,0		; C=0, not writing to file
+SaveLp:
+	PUSH	HL		; Check remaining space
+	INC	H
+	SBC	HL,SP
+	POP	HL
+	JR	NC,SaveTooLong	; Run out of memory
+	CALL	SaveLine
+	JR	C,SaveLp	; Build a line
+	INC	HL
+	LD	(HL),255	; Add terminator
+	INC	HL		; HL=end of converted program
+	POP	DE		; DE=sart of converted program
+	POP	BC		; Drop original length
+	POP	BC		; Drop original start
+SaveSave:
+	LD	(SCRAP+10),DE	; Start
+	LD	(SCRAP+14),HL	; End
+	LD	A,082H
+	CALL	ASBYTE		; Get addr high word
+	LD	(SCRAP+12),HL	; StartHi
+	LD	(SCRAP+16),HL	; EndHi
+	LD	HL,0FB00H
+	LD	(SCRAP+2),HL	; Load=&xxxxFB00
+	LD	H,L
+	LD	(SCRAP+6),HL	; Exec=&00000000
+	LD	(SCRAP+8),HL
+	DEC	HL
+	LD	(SCRAP+4),HL	; Load=&FFFFFB00
+	XOR	A		; 00=Save
+CallOsfile:
+	LD	HL,SCRAP
+	JP	ASFILE
+;
+SaveTooLong:
+	POP	BC		; Drop build address
+	XOR	A
+	LD	E,A		; A=0, E=0
+	CALL	CallArgs	; Point HL somewhere safe, get filing system ID
+	POP	HL		; Get original length back
+	POP	DE		; Get original start back
+	PUSH	DE
+	ADD	HL,DE		; HL=end
+	INC	H		; Add 512 leaway
+	INC	H
+	CP	4
+	CALL	NC,SaveSave	; Create dummy file if not Tape/ROM
+	LD	HL,(SCRAP+0)	; Get filename from control block
+	LD	A,080H
+	CALL	ASFIND		; OpenOut(filename)
+	AND	A
+	JR	NZ,SaveWrite
+	LD	A,192
+	CALL	EXTERR
+	DEFM	"Couldn't save file"
+	DEFB	0
+SaveWrite:
+	LD	C,A		; C=handle
+	LD	H,A
+	LD	A,CR
+	CALL	ASBPUT		; Initial CR
+	POP	DE		; Start of program
+WrLp1:
+;	LD	HL,(FREE)	; Build at VARTOP
+	LD	HL,BUFFER	; Build at BUFFER to avoid hitting stack
+	PUSH	HL
+	CALL	SaveLine
+	LD	H,C		; H=handle
+	POP	BC		; BC=>converted program
+	JR	NC,SaveOk	; End of program
+WrLp2:
+	INC	BC
+	LD	A,(BC)
+	CALL	ASBPUT
+	CP	CR
+	JR	NZ,WrLp2
+	LD	C,H		; Put handle back in C
+	JR	WrLp1		; Do another line
+SaveOk:
+	DEC	A		; A=255
+	CALL	ASBPUT		; Add terminator
+	DEFB	03EH		; Skip byte, close file
+;
+;OSSHUT - Close disk file(s).
+;   Inputs: E = file channel
+;           If E=0 all files are closed
+; Destroys: A,B,C,D,E,H,L,F
+;
+OSSHUT:	LD	H,E
+ASSHUT:	XOR	A
+	JP	ASFIND
+;
+SaveLine:
+	LD	A,(DE)
+	AND	A
+	RET	Z		; NC=End of program
+	;    len lo hi text cr len lo hi text cr 00
+	; cr hi lo len text cr hi lo len text cr FF
+	LD	(HL),CR
+	INC	HL
+	INC	DE
+	LD	A,(DE)
+	LD	B,A
+	INC	DE
+	LD	A,(DE)
+	LD	(HL),A
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	PUSH	HL
+	LD	B,3
+SaveLoop:
+	INC	DE
+	LD	A,(DE)
+	CALL	SaveByte
+	INC	B		; Incr. length
+	JR	Z,SaveRoom	; Too many expanded tokens
+	INC	HL		; Test before writing!
+	LD	(HL),A
+	CP	CR
+	JR	NZ,SaveLoop
+	EX	(SP),HL
+	LD	(HL),B		; Line length
+	INC	HL
+	LD	A,(HL)		; First byte on line
+	CP	08BH		; ELSE
+	JR	NZ,SaveEnd
+	LD	(HL),0CCH	; Change to Acorn ELSE
+SaveEnd:
+	POP	HL
+	INC	DE
+	SCF			; CS=Not end of program
+	RET
+;
+SaveRoom:
+	LD	H,C		; H=channel
+	XOR	A		; A=0
+	CP	H
+	CALL	NZ,ASSHUT	; If file open, close it, returns A=0
+	JP	ERROR		; Error 0,"No room"
+;
+SaveByte:
+	XOR	0B3H
+	CP	07FH
+	RET	Z
+	XOR	0B3H
+	CP	011H
+	JR	C,Save2Byte
+	CP	0C6H
+	RET	C
+	CP	0C9H
+	RET	NC
+	SUB	0B5H
+Save2Byte
+	EXX
+	LD	HL,SaveTrans
+	CALL	ByteFetch
+	INC	B		; Incr. length
+	JR	Z,SaveRoom	; Too many expanded tokens
+	INC	HL		; Test before writing!
+	LD	(HL),0C8H
+	AND	A
+	RET	M		; &C8,nn
+	DEC	(HL)
+	ADD	A,020H
+	RET	M		; &C7,nn
+	DEC	(HL)
+	ADD	A,020H
+	RET	M		; &C6,nn
+	LD	(HL),'B'
+	CP	'Y'
+	RET	Z
+	DEC	HL
+	DEC	B
+	AND	01FH
+RESET:
+SHUTALL:
+	RET
+;
+SaveTrans:
+	DEFB 000H,08FH,09DH,090H,097H,091H
+	DEFB 098H,093H,094H,099H,09CH,096H
+	DEFB 09BH,00DH,00EH,'Y'-040H,010H
+	DEFB 08EH-040H,095H,08EH
+;
+;OSLOAD - Load program from a file.
+;   Inputs: HL addresses filename (term CR)
+;           DE = address at which to load
+;           BC = maximum allowed size (bytes)
+;  Outputs: Carry reset indicates no room for file.
+; Destroys: A,B,C,D,E,H,L,F
+;
+OSLOAD:	LD	(SCRAP+0),HL	; filename
+	LD	(SCRAP+2),DE	; load address
+	LD	A,082H
+	CALL	ASBYTE		; Get addr high word
+	LD	(SCRAP+4),HL
+	XOR	A
+	LD	(SCRAP+6),A	; 00=load to supplied address
+	DEC	A		; FF=LOAD
+	CALL	CallOsfile	; Load file
+	LD	A,(DE)		; Check first byte
+	CP	CR
+	JR	NZ,LoadOk	; Russell-style BASIC program
+	LD	HL,3
+	ADD	HL,DE
+	LD	L,(HL)		; Get Acorn length byte
+	LD	H,0
+	ADD	HL,DE		; Point to next <cr>
+	CP	(HL)		; A=CR from above
+	JR	NZ,LoadOk	; No <cr>, must be Russell-style BASIC program
+	PUSH	DE		; Acorn-style program has to be reordered
+	POP	HL
+	INC	DE		; HL=PAGE, DE=PAGE+1
+LoadLoop:			; HL=><LEN>, DE=><HI>
+	LD	A,(DE)
+	INC	A
+	JR	Z,LoadEnd	; HI=&FF, end of program
+	DEC	A
+	LD	B,A		; B=HI
+	INC	DE
+	LD	A,(DE)		; A=LO
+	INC	DE
+	PUSH	HL
+	INC	HL
+	LD	(HL),A		; Store re-ordered LO,HI
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	B,3		; B=line length
+LoadSkipSpc:
+	INC	DE
+	LD	A,(DE)
+	CP	32
+	JR	Z,LoadSkipSpc
+LoadLine:
+	LD	A,(DE)
+	INC	DE
+	CALL	LoadByte	; Get Acorn program byte
+	AND	A		; Set NC in case bad line
+	INC	B		; Incr. length
+	JR	Z,LoadBad	; Line too long, pop and return
+	LD	(HL),A
+	INC	HL		; Store byte
+	CP	CR
+	JR	NZ,LoadLine
+	SCF
+	EX	(SP),HL
+	LD	(HL),B		; Set line length
+	INC	H
+	INC	H
+	SBC	HL,SP		; C=not running into stack, NC=running into stack
+LoadBad:
+	POP	HL
+	JR	C,LoadLoop	; Loop for next line
+	RET			; NC=Bad program
+LoadEnd:
+	LD	(HL),0		; End of program
+LoadOk:
+	SCF			; Flag OK and exit
+	RET
+;
+LoadByte:
+	XOR	0B3H
+	CP	0CCH
+	RET	Z		; &7F->&CC
+	XOR	0F4H
+	CP	08BH
+	RET	Z		; &CC->&8B
+	XOR	047H
+	CP	0C6H
+	RET	C		; <&C6
+	CP	0C9H
+	RET	NC		; >&C8
+	SUB	0C7H		; CS=&C6, CC=&C7/&C8
+	LD	A,(DE)
+	INC	DE
+	EXX
+	LD	HL,LoadTrans
+	SBC	A,08DH
+	AND	01FH
+ByteFetch:
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	LD	A,(HL)
+	EXX
+	RET
+LoadTrans:
+	DEFB 0C6H,0C8H,001H,003H,005H,0F0H
+	DEFB 007H,008H,0C7H,00BH,004H,006H
+	DEFB 009H,00CH,00CH,00AH,002H,000H
+	DEFB 00CH,000H,000H,000H,000H,000H
+	DEFB 000H,010H
+;
+;OSOPEN - Open a file for reading or writing.
+;   Inputs: HL addresses filename (term CR)
+;           Carry set for OPENIN/UP, cleared for OPENOUT.
+;           A = 0=OPENIN, 1=OPENUP, 255=OPENOUT
+;  Outputs: A = file channel (=0 if cannot open)
+; Destroys: A,B,C,D,E,H,L,F
+;
+OSOPEN:	RRA
+	RRA
+	AND	0C0H		;A=40/80/C0 OSFIND command
+	JP	ASFIND
+;
+;OSBPUT - Write a byte to a random disk file.
+;   Inputs: E = file channel
+;           A = byte to write
+; Destroys: A,B,C,F
+;
+OSBPUT:	PUSH	HL
+	LD	H,E
+	CALL	ASBPUT
+	POP	HL
+	RET
+;
+;OSBGET - Read a byte from a random disk file.
+;   Inputs: E = file channel
+;  Outputs: A = byte read
+;           Carry set if LAST BYTE of file
+; Destroys: A,B,C,F
+;
+OSBGET:	PUSH	HL
+	LD	H,E
+	CALL	ASBGET
+	POP	HL
+	RET
+;
+;OSSTAT - Read file status.
+;   Inputs: E = file channel
+;  Outputs: Z flag set - EOF
+;           (If Z then A=0)
+;           DE = address of file block.
+; Destroys: A,D,E,H,L,F
+;
+OSSTAT:	LD	L,E
+	LD	A,127
+	CALL	ASBYTE	; Returns <>&00 or &00
+	LD	A,L	; A<>&00,EOF    or &00,notEOF
+	CP	1	;    NC         or     C
+	SBC	A,A	; A-A-0 = 0+Z   or &00-&00-1 = &FF+NZ
+	RET
+;
+;GETPTR - Return file pointer.
+;   Inputs: E = file channel
+;  Outputs: DEHL = pointer (0-&7FFFFF)
+; Destroys: A,B,C,D,E,H,L,F
+;
+GETPTR:	XOR	A	; A=0 GetPTR
+	DEFB	021H	; Skip next two bytes
+;
+;GETEXT - Find file size.
+;   Inputs: E = file channel
+;  Outputs: DEHL = file size (0-&800000)
+; Destroys: A,B,C,D,E,H,L,F
+;
+GETEXT:	LD	A,2	;A=2 GetEXT
+	CALL	CallArgs
+	LD	HL,(SCRAP+2)
+	LD	DE,(SCRAP+4)
+	RET
+;
+;PUTEXT - Update file size.
+;   Inputs: A = file channel
+;           DEHL = new pointer (0-&7FFFFF)
+; Destroys: A,B,C,D,E,H,L,F
+;
+PUTEXT:	LD	B,3		;B=3 SetEXT
+	JR	PUTPT2
+;
+;PUTPTR - Update file pointer.
+;   Inputs: A = file channel
+;           DEHL = new pointer (0-&7FFFFF)
+; Destroys: A,B,C,D,E,H,L,F
+;
+PUTPTR:	LD	B,1		;B=1 SetPTR
+PUTPT2:	LD	(SCRAP+2),HL
+	LD	(SCRAP+4),DE
+	LD	E,A
+	LD	A,B
+CallArgs:
+	LD	HL,SCRAP+2
+	JP	ASARGS
+;
+;OSCLI - Process an "operating system" command
+;
+OSCLI:	EQU	ASCLI
+;
+BYE:	LD	HL,QUITS	;QUIT
+	CALL	OSCLI
+	RST	0
+QUITS:	DEFM	"QUIT",CR
+;
+;PROCESS 6502's BRK INSTRUCTION
+;
+BRK:	LD	HL,(BRKPTR)
+	PUSH	HL
+BRKTRP:	POP	HL
+	LD	A,(HL)
+	INC	HL
+	PUSH	HL
+	JP	EXTERR
+;
+;TRAP - Test for "ESC" and abort if so.
+;  Destroys: A,H,L,F
+;
+TRAP:
+LTRAP:	LD	A,(BRKFLG)
+	OR	A
+	RET	P
+ESC:	LD	A,126
+	CALL	ASBYTE
+	JP	ESCAPE
+;
+;OSRDCH - Read a character from console input.
+;  Outputs: A = character.
+; Destroys: A,F
+;
+OSRDCH:	EQU	ASRDCH
+;
+;OSWRCH - Write a character to console output.
+;   Inputs: A = character.
+; Destroys: Nothing
+;
+PROMPT:	LD	A,'>'
+	JP	OSWRCH
+OSWRCH:	EQU	0FFEEH
+;
+;OSLINE - Read a complete line, terminated by 
+;carriage return.
+;   Inputs: HL addresses destination buffer.
+;           (L=0)
+;  Outputs: Buffer filled, terminated by CR.
+;           A=0.
+;  Destroys: A,B,C,D,E,H,L,IX,F
+;
+OSLINE:	LD	(SCRAP),HL
+	LD	HL,SCRAP+4
+	LD	(HL),255	;MAX ASCII VALUE
+	DEC	HL
+	LD	(HL),' '	;MIN ASCII VALUE
+	DEC	HL
+	LD	(HL),255	;MAX LINE LENGTH
+	DEC	HL
+	DEC	HL		;HL=>SCRAP
+	XOR	A		;A=0
+	CALL	ASWORD
+	JR	C,ESC
+	XOR	A
+	RET
+;
+;OSINIT - Initialise RAM mapping etc.
+;If BASIC is entered by BBCBASIC FILENAME then filename
+;is automatically CHAINed.
+;   Outputs: DE = initial value of HIMEM (top of RAM)
+;            HL = initial value of PAGE (user program)
+;            Z-flag reset indicates AUTO-RUN.
+;  Destroys: A,B,C,D,E,H,L,F
+;
+OSINIT:	LD	A,0C3H
+	LD	(38H),A
+	LD	HL,BRKTRP
+	LD	(39H),HL
+	LD	HL,BRK
+	LD	(BRKVEC),HL
+	LD	A,229
+	LD	HL,0
+	CALL	ASBYTE		;ESC interrupts program
+	INC	A		;A=230
+	LD	HL,0
+	CALL	ASBYTE		;ESC flushes buffers
+	XOR	A		;A=0
+	LD	DE,ACCS
+	LD	HL,DSKBUF
+	LD	B,A
+	LD	C,(HL)		;BC=length of filename
+	INC	HL
+	CP	C
+	JR	Z,NOBOOT	;EQ=no boot, NE=boot
+	LDIR			;COPY TO ACCS
+NOBOOT:	EX	DE,HL
+	LD	(HL),CR
+	PUSH	AF
+	LD	A,084H
+	CALL	ASBYTE
+	EX	DE,HL		; DE=MEMTOP -> himem
+	DEC	A		; A=083H
+	CALL	ASBYTE		; HL=MEMBOT -> page
+	LD	A,H
+	LD	HL,USER
+	CP	H		; Check if MEMBOT is too low
+	JR	C,OSINT2	; Force MEMBOT=end of ws
+	LD	H,A		; Otherwise use MEMBOT
+OSINT2:	POP	AF
+	LD	L,A		; Ensure page aligned (A=0 from above)
+	RET
+;
+CR	EQU	0DH
+;
+BRKFLG	EQU	0FF80H
+BRKPTR	EQU	0FF82H
+ASFIND	EQU	0FFCEH
+ASBPUT	EQU	0FFD4H
+ASBGET	EQU	0FFD7H
+ASARGS	EQU	0FFDAH
+ASFILE	EQU	0FFDDH
+ASRDCH	EQU	0FFE0H
+ASWRCH	EQU	0FFEEH
+ASWORD	EQU	0FFF1H
+ASBYTE	EQU	0FFF4H
+ASCLI	EQU	0FFF7H
+BRKVEC	EQU	0FFFAH
+;
+DSKBUF	EQU	80H
+;
+
+SCRAP:	EQU	047EEH		; Align to end of workspace
+	DEFS	18-1		; Longest control block is OSFILE
+	DEFB	0		; Ensure space for ACCS-1 for TIME$=
+;
+VERS	EQU	500
+YEAR	EQU	2025
+BUILD	EQU	0205AH		;'Z '
+;
+FIN:	END
